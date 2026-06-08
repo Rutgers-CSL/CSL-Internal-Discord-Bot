@@ -22,6 +22,7 @@ async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
     cleanup_threads.start()
 
+# Task to clean up old threads every 2 hours
 @tasks.loop(hours=2)
 async def cleanup_threads():
     for guild in bot.guilds:
@@ -46,7 +47,7 @@ async def before_cleanup():
 
 
 
-
+# Command to create a coverage thread
 @bot.command()
 async def coverage(ctx, day: str, date: str, time: str, *, location: str):
     if day.lower() not in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
@@ -55,9 +56,6 @@ async def coverage(ctx, day: str, date: str, time: str, *, location: str):
     elif date.count("/") != 1:
         await ctx.send("Invalid date format. Please use MM/DD format (e.g., 09/15).")
         return
-    # elif time.count(":") != 1:
-    #     await ctx.send("Invalid time format. Please use HH:MM format (e.g., 14:30).")
-    #     return
     elif location.lower() not in ["csl", "hackerspace"]:
         await ctx.send("Invalid location. Please specify either 'CSL' or 'Hackerspace'.")
         return
@@ -70,6 +68,7 @@ async def coverage(ctx, day: str, date: str, time: str, *, location: str):
     )
     await thread.send(f"{ctx.author.mention} has created a coverage thread: **{thread_name}**")
 
+# Command to resolve a thread (close it)
 @bot.command()
 async def resolve(ctx):
     if isinstance(ctx.channel, discord.Thread):
@@ -77,11 +76,12 @@ async def resolve(ctx):
         await ctx.channel.delete()
     else:
         await ctx.send("This command can only be used inside a thread.")
-
+        
+# Command to clear the channel (for testing purposes)
 @bot.command()
 async def clear(ctx):
     await ctx.channel.purge(limit=100)
-
+# Command to manually trigger cleanup (for testing purposes)
 @bot.command()
 async def test_cleanup(ctx):
     await cleanup_threads()
