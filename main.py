@@ -3,17 +3,21 @@ from discord.ext import commands, tasks
 import logging
 from dotenv import load_dotenv
 from datetime import datetime
+from notion_client import Client
+import asyncio
 import os
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
+notion = Client(auth=os.getenv("NOTION_TOKEN"))
+database_id = os.getenv('NOTION_DATABASE_ID')
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-secret_role = "God"
+
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -46,8 +50,20 @@ async def before_cleanup():
     await bot.wait_until_ready()
 
 
+def create_notion_event(day, date, time, location):
+    notion.pages.create(
+        parent={"database_id": database_id},
+        properties={
+            "Name": {"title": [{"text": {"content": f"{day} {date} {time} in {location}"}}]},
+            "Date": {"date": {"start": f"2026-{date.replace('/', '-')}"}},
+            "Location": {"select": {"name": location}},
+        }
+    )
+
+
 
 # Command to create a coverage thread
+# !coverage 
 @bot.command()
 async def coverage(ctx, day: str, date: str, time: str, *, location: str):
     if day.lower() not in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
@@ -66,6 +82,8 @@ async def coverage(ctx, day: str, date: str, time: str, *, location: str):
         name=thread_name,
         type=discord.ChannelType.public_thread
     )
+    await asyncio.to_thread(create_notion_event, day, date, time, location)
+    await ctx.send("Event added to Notion calendar!", silent=True)
 
 # Command to resolve a thread (close it)
 @bot.command()
