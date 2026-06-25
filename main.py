@@ -20,7 +20,7 @@ intents.members = True
 
 
 bot = commands.Bot(command_prefix='!', intents=intents)
-
+#hello
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
