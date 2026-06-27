@@ -7,6 +7,9 @@ from notion_client import Client
 import asyncio
 import os
 
+#test 
+
+
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
