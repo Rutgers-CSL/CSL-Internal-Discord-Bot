@@ -20,6 +20,7 @@ class Reminders(commands.Cog):
         self.on_shift["current"] = ctx.author.id
         await ctx.send(f"{ctx.author.mention} is now on shift.")
         await self.send_headcount_ping(ctx.channel) #Manual for now 
+        await self.send_roomcheck_ping(ctx.channel) #Manual for now
 
     # Command: !offshift
     # Run by the person ending their shift to unregister themselves
@@ -28,6 +29,7 @@ class Reminders(commands.Cog):
     async def offshift(self, ctx):
         if self.on_shift.get("current") == ctx.author.id:
             await self.send_headcount_ping(ctx.channel) #Manual for now 
+            await self.send_roomcheck_ping(ctx.channel) #Manual for now
             self.on_shift.pop("current")
             await ctx.send(f"{ctx.author.mention} has ended their shift.")
         else:
@@ -43,6 +45,12 @@ class Reminders(commands.Cog):
         user_id = await self.get_current_shift_user()
         if user_id: 
             await channel.send(f"<@{user_id}> Please provide a headcount update.")
+    
+    # Sends the room check reminder ping to the person currently on shift 
+    async def send_roomcheck_ping(self, channel):
+        user_id = await self.get_current_shift_user()
+        if user_id:
+            await channel.send(f"<@{user_id}> Please do a room check.")
     
 
 # Required for main.py to load this file as an extension
@@ -60,6 +68,6 @@ async def setup(bot):
 #
 # STEP 2: Replace !onshift and !offshift with a scheduled task that checks Notion
 #
-# NOTE: send_headcount_ping() and get_current_shift_user() stay the same,
+# NOTE: send_headcount_ping(), send_roomcheck_ping(), and get_current_shift_user() stay the same,
 # only what triggers them changes (commands now, scheduled task later)
 # This also applies to future ping tasks (tickets, vouchers, etc)
