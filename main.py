@@ -26,6 +26,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
     await bot.load_extension("reminders") 
+    await bot.load_extension("ilab") 
     cleanup_threads.start()
 
 # Task to clean up old threads every 2 hours
