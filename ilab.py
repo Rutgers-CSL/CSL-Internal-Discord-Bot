@@ -11,32 +11,26 @@ class Ilab(commands.Cog):
     # Fetches the Ilab machines page and checks for any machines that are down 
     @commands.command() 
     async def ilab(self, ctx): 
-        url = "https://report.cs.rutgers.edu/nagiosnotes/iLab-machines.html"
-        response = requests.get(url)
-        soup = BeautifulSoup(response.text, "html.parser")
-        
-        # Only check these machines 
-        target_rooms = ["H248", "H252", "H254"] 
-        down_machines = {} 
+        # URLs for each room
+        clusters = {
+            "H248": "https://report.cs.rutgers.edu/cgi-bin/MachineStatus.pl?cluster=H248",
+            "H252": "https://report.cs.rutgers.edu/cgi-bin/MachineStatus.pl?cluster=H252",
+            "H254": "https://report.cs.rutgers.edu/cgi-bin/MachineStatus.pl?cluster=H254"
+        }
+        down_machines = {}
 
-        # Find all the tables on the machine 
-        tables = soup.find_all("table") 
-
-        for table in tables: 
-            # Get the table title to check if it is one of the target rooms 
-            title = table.find("th")
-            if title:
-                for room in target_rooms: 
-                    if room in title.text: 
-                        # Find all rows with criticalStatus in this table 
-                        down_rows = table.find_all("td", class_="criticalStatus")
-                        for row in down_rows: 
-                            # Get the hostname (first cell in the row) 
-                            hostname = row.text.strip()
-                            if hostname and "." in hostname: # make sure its an actual hostname
-                                if room not in down_machines: 
-                                    down_machines[room] = [] 
-                                down_machines[room].append(hostname) 
+        for room, url in clusters.items():
+            response = requests.get(url)
+            soup = BeautifulSoup(response.text, "html.parser")
+            
+            # Find all rows with criticalStatus in this table
+            down_rows = soup.find_all("td", class_="criticalStatus")
+            for row in down_rows:
+                hostname = row.text.strip()
+                if hostname and "." in hostname:
+                    if room not in down_machines:
+                        down_machines[room] = []
+                    down_machines[room].append(hostname)
         
         # Format and send the message 
         if not down_machines: 
