@@ -7,6 +7,7 @@ from notion_client import Client
 import asyncio
 import os
 
+
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
@@ -24,6 +25,7 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
+    await bot.load_extension("reminders") 
     cleanup_threads.start()
 
 # Task to clean up old threads every 2 hours
