@@ -4,6 +4,7 @@ import logging
 from dotenv import load_dotenv
 from datetime import datetime
 from notion_client import Client
+from notion_helper import get_data_source_id, get_calendar_entries, get_shifts_needing_coverage, get_todays_shifts, resolve_shift, create_notion_event
 import asyncio
 import os
 
@@ -50,26 +51,25 @@ async def before_cleanup():
     await bot.wait_until_ready()
 
 
-def create_notion_event(day, date, time, location):
-    notion.pages.create(
-        parent={"database_id": database_id},
-        properties={
-            "Name": {"title": [{"text": {"content": f"{day} {date} {time} in {location}"}}]},
-            "Date": {"date": {"start": f"2026-{date.replace('/', '-')}"}},
-            "Location": {"select": {"name": location}},
-        }
-    )
-
-
-
+#helper function to parse date
+def parse_shift_date(date: str):
+    """Returns a datetime.date if valid MM/DD, else None."""
+    try:
+        # %m/%d parses month/day; year defaults to 1900 but we don't care about it here
+        parsed = datetime.strptime(date, "%m/%d")
+        return parsed
+    except ValueError:
+        return None
+    
 # Command to create a coverage thread
 # !coverage 
 @bot.command()
 async def coverage(ctx, day: str, date: str, time: str, *, location: str):
+    parsed_date = parse_shift_date(date)
     if day.lower() not in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
         await ctx.send("Invalid day. Please use a valid weekday (e.g., Monday, Tuesday).")
         return
-    elif date.count("/") != 1:
+    elif parsed_date is None:
         await ctx.send("Invalid date format. Please use MM/DD format (e.g., 09/15).")
         return
     elif location.lower() not in ["csl", "hackerspace"]:
