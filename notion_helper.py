@@ -6,8 +6,10 @@ from datetime import datetime
 from notion_client import Client
 import os
 import re
+from zoneinfo import ZoneInfo
 
 load_dotenv()
+LOCAL_TZ = ZoneInfo("America/New_York")
 
 notion = Client(auth=os.getenv("NOTION_TOKEN"))
 DATABASE_ID = os.getenv("NOTION_DATABASE_ID")
@@ -104,6 +106,8 @@ def create_notion_event(day, date, time, location):
     date_str = f"{year}-{date.replace('/', '-')}"
 
     start_dt, end_dt = parse_time_range(time, date_str)
+    start_dt = start_dt.replace(tzinfo=LOCAL_TZ)
+    end_dt = end_dt.replace(tzinfo=LOCAL_TZ)
 
     notion.pages.create(
         parent={"data_source_id": DATA_SOURCE_ID},
@@ -125,5 +129,5 @@ def create_notion_event(day, date, time, location):
 
 if __name__ == "__main__":
         entries = get_calendar_entries()  # or no await if it's sync
-        create_notion_event("Monday", "09/15", "3:00 PM", "CSL")
+        create_notion_event("Monday", "09/15", "3-5pm", "CSL")
         print(entries)
