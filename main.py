@@ -83,8 +83,18 @@ async def coverage(ctx, day: str, date: str, time: str, *, location: str):
         type=discord.ChannelType.public_thread
     )
     await asyncio.to_thread(create_notion_event, day, date, time, location)
-    await ctx.send("Event added to Notion calendar!", silent=True)
 
+
+#helper to resolve a shift
+def resolve_shift(thread_name: str, discord_username: str):
+    notion.pages.update(
+        page_id=find_page_id_by_thread_name(thread_name),
+        properties={
+            "Resolved By": {
+                "rich_text": [{"text": {"content": discord_username}}]
+            }
+        }
+    )
 # Command to resolve a thread (close it)
 @bot.command()
 async def resolve(ctx):
