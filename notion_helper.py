@@ -47,15 +47,62 @@ def get_todays_shifts():
     )
     return response["results"]
 
-def resolve_shift(page_id, assignee_name):
-    notion.pages.update(
-        page_id=page_id,
-        properties={
-            "Status": {"select": {"name": "Covered"}},
-            "Assignee": {"rich_text": [{"text": {"content": assignee_name}}]}
-        }
+def resolve_partial_shift(page_id, day, date, full_time, covered_time, location, assignee_id=None):
+    """
+    Splits a shift into a covered event and remaining uncovered event(s).
+    full_time: original shift time range string, e.g. "7-9pm"
+    covered_time: the portion being claimed, e.g. "7-8pm"
+    """
+    year = datetime.now().year
+    date_str = f"{year}-{date.replace('/', '-')}"
+
+    full_start, full_end = parse_time_range(full_time, date_str)
+    covered_start, covered_end = parse_time_range(covered_time, date_str)
+
+    # Sanity check: covered range must fall within the full shift
+    if covered_start < full_start or covered_end > full_end:
+        raise ValueError(f"Covered time {covered_time} is outside the shift range {full_time}")
+
+    # Archive the original event since it's being replaced
+    notion.pages.update(page_id=page_id, archived=True)
+
+    # Create the covered event (status = Covered, not "Needs Coverage")
+    create_notion_event(
+        day, date,
+        format_time_range(covered_start, covered_end),
+        location,
+        status="Covered",
+        assignee_id=assignee_id
     )
 
+    remainder_times = []
+    # Remainder before the covered chunk (e.g. covered chunk starts later than shift start)
+    if covered_start > full_start:
+        remainder_times = format_time_range(full_start, covered_start)
+        create_notion_event(
+            day, date,
+            format_time_range(full_start, covered_start),
+            location,
+            status="Needs Coverage"
+        )
+
+    # Remainder after the covered chunk (e.g. covered chunk ends before shift end)
+    if covered_end < full_end:
+        remainder_times = format_time_range(covered_end, full_end)
+        create_notion_event(
+            day, date,
+            format_time_range(covered_end, full_end),
+            location,
+            status="Needs Coverage"
+        )
+    return remainder_times  # list of strings like ["7:00pm-8:00pm", "8:30pm-9:00pm"] for any remaining uncovered portions
+
+
+def format_time_range(start_dt, end_dt):
+    """Turns two datetimes back into a display string like '7:00pm-8:00pm'."""
+    def fmt(dt):
+        return dt.strftime("%-I:%M%p").lower().replace(":00", "")
+    return f"{fmt(start_dt)}-{fmt(end_dt)}"
 # parses time ranges so that notion events can be created with proper start and end times
 def parse_time_range(time_str, date_str):
     """
@@ -101,7 +148,7 @@ def parse_time_range(time_str, date_str):
 
     return start_dt, end_dt
 
-def create_notion_event(day, date, time, location):
+def create_notion_event(day, date, time, location, status="Needs Coverage", assignee_id=None):
     year = datetime.now().year
     date_str = f"{year}-{date.replace('/', '-')}"
 
@@ -109,25 +156,34 @@ def create_notion_event(day, date, time, location):
     start_dt = start_dt.replace(tzinfo=LOCAL_TZ)
     end_dt = end_dt.replace(tzinfo=LOCAL_TZ)
 
+    properties={
+        "Name": {"title": [{"text": {"content": f"{day} {date} {time} in {location}"}}]},
+        "Date": {
+            "date": {
+                "start": start_dt.isoformat(),
+                "end": end_dt.isoformat(),
+            }
+        },
+        "Location": {"select": {"name": location}},
+        "Status": {"select": {"name": status}},
+    }
+        
+    if assignee_id:
+        properties["Assignee"] = {"people": [{"id": assignee_id}]}
+
     notion.pages.create(
         parent={"data_source_id": DATA_SOURCE_ID},
-        properties={
-            "Name": {"title": [{"text": {"content": f"{day} {date} {time} in {location}"}}]},
-            "Date": {
-                "date": {
-                    "start": start_dt.isoformat(),
-                    "end": end_dt.isoformat(),
-                }
-            },
-            "Location": {"select": {"name": location}},
-            "Status": {"select": {"name": "Needs Coverage"}},
-        }
+        properties=properties
     )
 
 
-
+def list_notion_users():
+    response = notion.users.list()
+    for user in response["results"]:
+        print(user["id"], user.get("name"))
 
 if __name__ == "__main__":
         entries = get_calendar_entries()  # or no await if it's sync
         create_notion_event("Monday", "09/15", "3-5pm", "CSL")
-        print(entries)
+        list_notion_users()
+        #print(entries)
