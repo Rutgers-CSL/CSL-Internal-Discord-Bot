@@ -13,7 +13,12 @@ npm-debug.log*
 # OS files
 .DS_Store
 Thumbs.db
+__pycache__/
 
 # Editor folders
 .vscode/
 .idea/
+
+# notion id to discord id mappings
+discord_to_notion.py
+
