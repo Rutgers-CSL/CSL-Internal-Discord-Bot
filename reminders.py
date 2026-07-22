@@ -2,6 +2,7 @@
 import discord 
 from discord.ext import commands, tasks 
 
+ON_SHIFT_ROLE_ID = 1529576268310515867
 
 # Cog = a way to organize bot commands in a separate file from main.py
 # This connects to the bot defined in main.py via load_extension("reminders") 
@@ -18,18 +19,30 @@ class Reminders(commands.Cog):
     @commands.command()
     async def onshift(self, ctx): 
         self.on_shift["current"] = ctx.author.id
+        
+        # Add the On Shift role
+        role = ctx.guild.get_role(ON_SHIFT_ROLE_ID)
+        if role:
+            await ctx.author.add_roles(role)
+
         await ctx.send(f"{ctx.author.mention} is now on shift.")
-        await self.send_headcount_ping(ctx.channel) #Manual for now 
-        await self.send_roomcheck_ping(ctx.channel) #Manual for now
+        await self.send_headcount_ping(ctx.channel) # Manual for now 
+        await self.send_roomcheck_ping(ctx.channel) # Manual for now
 
     # Command: !offshift
     # Run by the person ending their shift to unregister themselves
-    # Checks if they're actually the one on shift before removing them
+    # Removes the On Shift role and clears current shift user
     @commands.command()
     async def offshift(self, ctx):
         if self.on_shift.get("current") == ctx.author.id:
-            await self.send_headcount_ping(ctx.channel) #Manual for now 
-            await self.send_roomcheck_ping(ctx.channel) #Manual for now
+            await self.send_headcount_ping(ctx.channel) # Manual for now 
+            await self.send_roomcheck_ping(ctx.channel) # Manual for now
+            
+            # Remove the On Shift role
+            role = ctx.guild.get_role(ON_SHIFT_ROLE_ID)
+            if role:
+                await ctx.author.remove_roles(role)
+
             self.on_shift.pop("current")
             await ctx.send(f"{ctx.author.mention} has ended their shift.")
         else:
