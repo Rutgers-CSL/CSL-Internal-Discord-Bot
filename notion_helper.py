@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands, tasks
 import logging
@@ -7,6 +8,7 @@ from notion_client import Client
 import os
 import re
 from zoneinfo import ZoneInfo
+from thread_page_mapping import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
 
 load_dotenv()
 LOCAL_TZ = ZoneInfo("America/New_York")
@@ -23,7 +25,7 @@ DATA_SOURCE_ID = get_data_source_id()
 def get_calendar_entries():
     response = notion.data_sources.query(
     data_source_id=DATA_SOURCE_ID
-)
+    )
     return response["results"]
 
 def get_shifts_needing_coverage():
@@ -76,25 +78,29 @@ def resolve_partial_shift(page_id, day, date, full_time, covered_time, location,
     )
 
     remainder_times = []
-    # Remainder before the covered chunk (e.g. covered chunk starts later than shift start)
     if covered_start > full_start:
-        remainder_times = format_time_range(full_start, covered_start)
-        create_notion_event(
-            day, date,
-            format_time_range(full_start, covered_start),
-            location,
-            status="Needs Coverage"
-        )
-
-    # Remainder after the covered chunk (e.g. covered chunk ends before shift end)
+        remainder_times.append(format_time_range(full_start, covered_start))
     if covered_end < full_end:
-        remainder_times = format_time_range(covered_end, full_end)
-        create_notion_event(
-            day, date,
-            format_time_range(covered_end, full_end),
-            location,
-            status="Needs Coverage"
-        )
+        remainder_times.append(format_time_range(covered_end, full_end))
+    # # Remainder before the covered chunk (e.g. covered chunk starts later than shift start)
+    # if covered_start > full_start:
+    #     remainder_times = format_time_range(full_start, covered_start)
+    #     create_notion_event(
+    #         day, date,
+    #         format_time_range(full_start, covered_start),
+    #         location,
+    #         status="Needs Coverage"
+    #     )
+
+    # # Remainder after the covered chunk (e.g. covered chunk ends before shift end)
+    # if covered_end < full_end:
+    #     remainder_times = format_time_range(covered_end, full_end)
+    #     create_notion_event(
+    #         day, date,
+    #         format_time_range(covered_end, full_end),
+    #         location,
+    #         status="Needs Coverage"
+    #     )
     return remainder_times  # list of strings like ["7:00pm-8:00pm", "8:30pm-9:00pm"] for any remaining uncovered portions
 
 
@@ -171,11 +177,26 @@ def create_notion_event(day, date, time, location, status="Needs Coverage", assi
     if assignee_id:
         properties["Assignee"] = {"people": [{"id": assignee_id}]}
 
-    notion.pages.create(
+    return notion.pages.create(
         parent={"data_source_id": DATA_SOURCE_ID},
         properties=properties
     )
 
+
+async def create_shift_thread(channel, day, date, time, location):
+    """
+    Creates a coverage thread in the given channel + a matching Notion page,
+    and stores the thread<->page mapping.
+    Returns the created thread.
+    """
+    thread_name = f"{day} {date} {time} in {location}"
+    thread = await channel.create_thread(
+        name=thread_name,
+        type=discord.ChannelType.public_thread
+    )
+    page = await asyncio.to_thread(create_notion_event, day, date, time, location)
+    set_page_id_for_thread(thread.id, page["id"])
+    return thread, page
 
 def list_notion_users():
     response = notion.users.list()

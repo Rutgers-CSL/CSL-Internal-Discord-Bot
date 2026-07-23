@@ -19,6 +19,6 @@ __pycache__/
 .vscode/
 .idea/
 
-# notion id to discord id mappings
+# mappings
 discord_to_notion.py
-
+thread_to_page.json

@@ -5,9 +5,9 @@ from dotenv import load_dotenv
 from datetime import datetime
 from notion_client import Client
 from notion_helper import get_data_source_id, get_calendar_entries
-from notion_helper import get_shifts_needing_coverage, get_todays_shifts
-from notion_helper import create_notion_event, parse_time_range, resolve_partial_shift
+from notion_helper import create_notion_event, parse_time_range, resolve_partial_shift, create_shift_thread
 from discord_to_notion import DISCORD_TO_NOTION
+from thread_page_mapping import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
 import re
 import asyncio
 import os
@@ -80,14 +80,8 @@ async def coverage(ctx, day: str, date: str, time: str, *, location: str):
         await ctx.send("Invalid location. Please specify either 'CSL' or 'Hackerspace'.")
         return
     
-
-    thread_name = f"{day} {date} {time} in {location}"
-    thread = await ctx.channel.create_thread(
-        name=thread_name,
-        type=discord.ChannelType.public_thread
-    )
     await ctx.message.delete()  # delete the original command message for cleanliness
-    await asyncio.to_thread(create_notion_event, day, date, time, location)
+    await create_shift_thread(ctx.channel, day, date, time, location)
 
 
 @bot.command(name="resolve")
@@ -114,20 +108,7 @@ async def resolve(ctx, time: str = None):
     day, date, full_time, location = match.groups()
     parent_channel = ctx.channel.parent  # thread's parent text channel
 
-    # Find the matching Notion page for this shift
-    entries = get_calendar_entries()
-    target_entry = None
-    for entry in entries:
-        name = entry["properties"]["Name"]["title"][0]["text"]["content"]
-        if name == ctx.channel.name:
-            target_entry = entry
-            break
-
-    if not target_entry:
-        await ctx.send("❌ Couldn't find matching shift in Notion.")
-        return
-
-    page_id = target_entry["id"]
+    page_id = get_page_id_for_thread(ctx.channel.id)
 
     try:
         if time is None:
@@ -140,14 +121,10 @@ async def resolve(ctx, time: str = None):
             # PARTIAL RESOLVE
             
             for remainder_time in remainder_times:
-                print(f"Remainder times after resolving {time}: {remainder_times}")
-                new_thread_name = f"{day} {date} {remainder_time} in {location}"
-                await parent_channel.create_thread(
-                    name=new_thread_name,
-                    type=discord.ChannelType.public_thread
-                )
+                await create_shift_thread(parent_channel, day, date, remainder_time, location)
             await ctx.send(f"✅ {time} covered, remaining time still needs coverage. Closing thread...", silent=True)
 
+        delete_thread_mapping(ctx.channel.id)
         await ctx.channel.delete()
 
     except ValueError as e:
