@@ -49,6 +49,15 @@ def get_todays_shifts():
     )
     return response["results"]
 
+def parse_shift_date(date: str):
+    """Returns a datetime.date if valid MM/DD, else None."""
+    try:
+        # %m/%d parses month/day; year defaults to 1900 but we don't care about it here
+        parsed = datetime.strptime(date, "%m/%d")
+        return parsed
+    except ValueError:
+        return None
+
 def resolve_partial_shift(page_id, day, date, full_time, covered_time, location, assignee_id=None):
     """
     Splits a shift into a covered event and remaining uncovered event(s).
@@ -198,6 +207,8 @@ async def create_shift_thread(channel, day, date, time, location):
     set_page_id_for_thread(thread.id, page["id"])
     return thread, page
 
+
+    
 def list_notion_users():
     response = notion.users.list()
     for user in response["results"]:

@@ -1,144 +1,160 @@
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
 import logging
 from dotenv import load_dotenv
 from datetime import datetime
-from notion_client import Client
-from notion_helper import get_data_source_id, get_calendar_entries
-from notion_helper import create_notion_event, parse_time_range, resolve_partial_shift, create_shift_thread
-from discord_to_notion import DISCORD_TO_NOTION
-from thread_page_mapping import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
+from gsheets_helper import (
+    parse_shift_date,
+    parse_time_range,
+    resolve_full_shift,
+    resolve_partial_shift,
+    create_shift_thread,
+    find_row_by_threadid,
+)
+from discord_to_sheets import DISCORD_TO_ASSIGNEE
 import re
-import asyncio
 import os
 
 load_dotenv()
 token = os.getenv('DISCORD_TOKEN')
-notion = Client(auth=os.getenv("NOTION_TOKEN"))
-database_id = os.getenv('NOTION_DATABASE_ID')
 
 handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w')
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
 
-
-
 bot = commands.Bot(command_prefix='!', intents=intents)
-#hello
+
+
 @bot.event
 async def on_ready():
     print(f'{bot.user.name} has connected to Discord!')
-    cleanup_threads.start()
-
-# Task to clean up old threads every 2 hours
-@tasks.loop(hours=2)
-async def cleanup_threads():
-    for guild in bot.guilds:
-        for channel in guild.text_channels:
-            for thread in channel.threads:
-                try:
-                    parts = thread.name.split(" ")
-                    date_str = parts[1]
-                    month, day = map(int, date_str.split("/"))
-                    year = datetime.now().year
-                    thread_date = datetime(year, month, day)
-
-                    if datetime.now() > thread_date:
-                        await thread.send("This coverage shift has passed. Closing thread...", silent=True)
-                        await thread.delete()
-                except Exception as e:
-                    print(f"Skipping thread '{thread.name}': {e}")
-
-@cleanup_threads.before_loop
-async def before_cleanup():
-    await bot.wait_until_ready()
-
-
-#helper function to parse date
-def parse_shift_date(date: str):
-    """Returns a datetime.date if valid MM/DD, else None."""
     try:
-        # %m/%d parses month/day; year defaults to 1900 but we don't care about it here
-        parsed = datetime.strptime(date, "%m/%d")
-        return parsed
-    except ValueError:
-        return None
-    
-# Command to create a coverage thread
-# !coverage 
-@bot.command()
-async def coverage(ctx, day: str, date: str, time: str, *, location: str):
+        synced = await bot.tree.sync()
+        print(f"Synced {len(synced)} slash command(s).")
+    except Exception as e:
+        print(f"Failed to sync commands: {e}")
+    # cleanup_threads.start()
+
+
+# # Task to clean up old threads every 2 hours
+# @tasks.loop(hours=2)
+# async def cleanup_threads():
+#     for guild in bot.guilds:
+#         for channel in guild.text_channels:
+#             for thread in channel.threads:
+#                 try:
+#                     parts = thread.name.split(" ")
+#                     date_str = parts[1]
+#                     month, day = map(int, date_str.split("/"))
+#                     year = datetime.now().year
+#                     thread_date = datetime(year, month, day)
+
+#                     if datetime.now() > thread_date:
+#                         await thread.send("This coverage shift has passed. Closing thread...", silent=True)
+#                         await thread.delete()
+#                 except Exception as e:
+#                     print(f"Skipping thread '{thread.name}': {e}")
+
+
+# @cleanup_threads.before_loop
+# async def before_cleanup():
+#     await bot.wait_until_ready()
+
+
+# Slash command to create a coverage thread
+# /coverage
+@bot.tree.command(name="coverage", description="Create a coverage thread for an open shift")
+@app_commands.describe(
+    day="Day of the week (e.g., Monday)",
+    date="Date in MM/DD format (e.g., 09/15)",
+    time="Time range for the shift (e.g., 7-9pm)",
+    location="Location: CSL or Hackerspace",
+)
+async def coverage(interaction: discord.Interaction, day: str, date: str, time: str, location: str):
     parsed_date = parse_shift_date(date)
     if day.lower() not in ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]:
-        await ctx.send("Invalid day. Please use a valid weekday (e.g., Monday, Tuesday).")
+        await interaction.response.send_message(
+            "Invalid day. Please use a valid weekday (e.g., Monday, Tuesday).", ephemeral=True
+        )
         return
     elif parsed_date is None:
-        await ctx.send("Invalid date format. Please use MM/DD format (e.g., 09/15).")
+        await interaction.response.send_message(
+            "Invalid date format. Please use MM/DD format (e.g., 09/15).", ephemeral=True
+        )
         return
     elif location.lower() not in ["csl", "hackerspace"]:
-        await ctx.send("Invalid location. Please specify either 'CSL' or 'Hackerspace'.")
+        await interaction.response.send_message(
+            "Invalid location. Please specify either 'CSL' or 'Hackerspace'.", ephemeral=True
+        )
         return
-    
-    await ctx.message.delete()  # delete the original command message for cleanliness
-    await create_shift_thread(ctx.channel, day, date, time, location)
+
+    await interaction.response.send_message("Creating coverage thread...", ephemeral=True)
+    await create_shift_thread(interaction.channel, day, date, time, location)
 
 
-@bot.command(name="resolve")
-async def resolve(ctx, time: str = None):
+@bot.tree.command(name="resolve", description="Resolve a shift (fully or partially) and close the thread")
+@app_commands.describe(time="Optional: only resolve part of the shift (e.g., 7-8pm). Leave blank to resolve fully.")
+async def resolve(interaction: discord.Interaction, time: str = None):
     """
-    !resolve            -> resolves the entire shift, closes thread
-    !resolve 7-8pm      -> resolves only that portion, closes thread
+    /resolve            -> resolves the entire shift, closes thread
+    /resolve time:7-8pm -> resolves only that portion, closes thread
     """
-    if not isinstance(ctx.channel, discord.Thread):
-        await ctx.send("This command can only be used inside a thread.")
+    if not isinstance(interaction.channel, discord.Thread):
+        await interaction.response.send_message("This command can only be used inside a thread.", ephemeral=True)
         return
-    
-    notion_user_id = DISCORD_TO_NOTION.get(ctx.author.id)
-    if not notion_user_id:
-        await ctx.send(f"❌ {ctx.author.display_name} isn't mapped to a Notion account. Ask an admin to add you.")
+
+    assignee_id = DISCORD_TO_ASSIGNEE.get(interaction.user.id)
+    if not assignee_id:
+        await interaction.response.send_message(
+            f"❌ {interaction.user.display_name} isn't mapped to a sheet assignee. Ask an admin to add you.",
+            ephemeral=True,
+        )
         return
 
     # Parse thread name: "{day} {date} {time} in {location}"
-    match = re.match(r"^(\S+)\s+(\S+)\s+(.+?)\s+in\s+(.+)$", ctx.channel.name)
+    match = re.match(r"^(\S+)\s+(\S+)\s+(.+?)\s+in\s+(.+)$", interaction.channel.name)
     if not match:
-        await ctx.send("❌ Couldn't parse shift info from thread name.")
+        await interaction.response.send_message("❌ Couldn't parse shift info from thread name.", ephemeral=True)
         return
 
     day, date, full_time, location = match.groups()
-    parent_channel = ctx.channel.parent  # thread's parent text channel
-
-    page_id = get_page_id_for_thread(ctx.channel.id)
+    parent_channel = interaction.channel.parent  # thread's parent text channel
+    thread_id = interaction.channel.id
 
     try:
         if time is None:
             # FULL RESOLVE
-            notion.pages.update(page_id=page_id, archived=True)
-            create_notion_event(day, date, full_time, location, status="Covered", assignee_id=notion_user_id)
-            await ctx.send("✅ Shift fully covered! Closing thread...", silent=True)
+            resolve_full_shift(thread_id, assignee_id=assignee_id)
+            await interaction.response.send_message("✅ Shift fully covered! Closing thread...")
         else:
-            remainder_times = resolve_partial_shift(page_id, day, date, full_time, time, location, assignee_id=notion_user_id)
             # PARTIAL RESOLVE
-            
+            remainder_times = resolve_partial_shift(thread_id, day, date, full_time, time, location, assignee_id=assignee_id)
             for remainder_time in remainder_times:
                 await create_shift_thread(parent_channel, day, date, remainder_time, location)
-            await ctx.send(f"✅ {time} covered, remaining time still needs coverage. Closing thread...", silent=True)
+            await interaction.response.send_message(f"✅ {time} covered, remaining time still needs coverage. Closing thread...")
 
-        delete_thread_mapping(ctx.channel.id)
-        await ctx.channel.delete()
+        await interaction.channel.delete()
 
     except ValueError as e:
-        await ctx.send(f"❌ {e}")
+        await interaction.response.send_message(f"❌ {e}", ephemeral=True)
 
-# Command to clear the channel (for testing purposes)
-@bot.command()
-async def clear(ctx):
-    await ctx.channel.purge(limit=100)
-# Command to manually trigger cleanup (for testing purposes)
-@bot.command()
-async def test_cleanup(ctx):
-    await cleanup_threads()
-    await ctx.send("Cleanup ran!")
+
+# Slash command to clear the channel (for testing purposes)
+# @bot.tree.command(name="clear", description="Purge up to 100 messages in this channel (testing only)")
+# async def clear(interaction: discord.Interaction):
+#     await interaction.response.defer(ephemeral=True)
+#     await interaction.channel.purge(limit=100)
+#     await interaction.followup.send("Channel cleared!", ephemeral=True)
+
+
+# # Slash command to manually trigger cleanup (for testing purposes)
+# @bot.tree.command(name="test_cleanup", description="Manually trigger the thread cleanup task (testing only)")
+# async def test_cleanup(interaction: discord.Interaction):
+#     await interaction.response.defer(ephemeral=True)
+#     await cleanup_threads()
+#     await interaction.followup.send("Cleanup ran!", ephemeral=True)
+
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
-

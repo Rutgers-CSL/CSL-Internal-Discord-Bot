@@ -20,5 +20,8 @@ __pycache__/
 .idea/
 
 # mappings
-discord_to_notion.py
+discord_to_sheets.py
 thread_to_page.json
+
+# API Key
+CSL_Discord_Bot.json

@@ -1,5 +1,5 @@
 from datetime import datetime
-from notion_helper import create_notion_event, parse_time_range
+from old_notion_scripts.notion_helper import create_notion_event, parse_time_range
 
 def run_tests():
     date_str = "2026-07-16"  # arbitrary fixed date for testing
