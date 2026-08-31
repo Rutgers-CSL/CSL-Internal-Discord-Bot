@@ -8,8 +8,8 @@ from datetime import datetime
 from notion_client import Client
 from old_notion_scripts.notion_helper import parse_shift_date
 from old_notion_scripts.notion_helper import create_notion_event, parse_time_range, resolve_partial_shift, create_shift_thread
-from discord_to_sheets import DISCORD_TO_NOTION
-from thread_page_mapping import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
+from old_notion_scripts.discord_to_sheets import DISCORD_TO_NOTION
+from name_mappings import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
 import re
 import asyncio
 import os

@@ -1,9 +1,12 @@
+import asyncio
+
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 import logging
 from dotenv import load_dotenv
-from datetime import datetime
+from datetime import datetime, time as dtime
+from zoneinfo import ZoneInfo
 from gsheets_helper import (
     parse_shift_date,
     parse_time_range,
@@ -12,7 +15,8 @@ from gsheets_helper import (
     create_shift_thread,
     find_row_by_threadid,
 )
-from discord_to_sheets import DISCORD_TO_ASSIGNEE
+from name_mappings  import get_assignee_name, set_assignee_name
+from schedule_helper import build_daily_schedule_embed
 import re
 import os
 
@@ -23,6 +27,13 @@ handler = logging.FileHandler(filename='discord.log', encoding='utf-8', mode='w'
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
+
+SCHEDULE_CHANNEL_ID = os.getenv("SCHEDULE_CHANNEL_ID")
+LOCAL_TZ = ZoneInfo("America/New_York")
+DAILY_POST_TIME = dtime(hour=8, minute=0, tzinfo=LOCAL_TZ)
+
+_schedule_message = None
+_schedule_message_date = None
 
 bot = commands.Bot(command_prefix='!', intents=intents)
 
@@ -93,6 +104,57 @@ async def coverage(interaction: discord.Interaction, day: str, date: str, time: 
     await interaction.response.send_message("Creating coverage thread...", ephemeral=True)
     await create_shift_thread(interaction.channel, day, date, time, location)
 
+# Slash command to register your Discord account -> preferred name mapping.
+# DM-only: this is a personal setting, not something that belongs in a
+# server channel.
+@bot.tree.command(name="register", description="DM only: set the name used for shift coverage credit")
+@app_commands.describe(name="Your preferred name, as it should appear in the coverage sheet")
+async def register(interaction: discord.Interaction, name: str):
+    if interaction.guild is not None:
+        await interaction.response.send_message(
+            "❌ This command only works in a DM with me, not in a server. "
+            "Send me a direct message and run `/register` there.",
+            ephemeral=True,
+        )
+        return
+
+    await asyncio.to_thread(set_assignee_name, interaction.user.id, name)
+    await interaction.response.send_message(
+        f"✅ Got it — you're registered as **{name}**. This is the name that'll show up when you cover a shift.",
+        ephemeral=True,
+    )
+
+
+
+
+@bot.tree.command(name="schedule", description="DM only: view a day's shift schedule with live coverage status")
+@app_commands.describe(date="Optional: MM/DD date to view (defaults to today)")
+async def schedule(interaction: discord.Interaction, date: str = None):
+    if interaction.guild is not None:
+        await interaction.response.send_message(
+            "❌ This command only works in a DM with me, not in a server. "
+            "Send me a direct message and run `/schedule` there.",
+            ephemeral=True,
+        )
+        return
+ 
+    target_date = datetime.now(LOCAL_TZ)
+    if date is not None:
+        parsed = parse_shift_date(date)
+        if parsed is None:
+            await interaction.response.send_message(
+                "❌ Invalid date format. Please use MM/DD (e.g., 09/15).", ephemeral=True
+            )
+            return
+        target_date = target_date.replace(month=parsed.month, day=parsed.day)
+ 
+    # Defer: building this reads two Sheets tabs, which can exceed
+    # Discord's 3-second response window.
+    await interaction.response.defer()
+    embed = await asyncio.to_thread(build_daily_schedule_embed, target_date)
+    await interaction.followup.send(embed=embed)
+ 
+
 
 @bot.tree.command(name="resolve", description="Resolve a shift (fully or partially) and close the thread")
 @app_commands.describe(time="Optional: only resolve part of the shift (e.g., 7-8pm). Leave blank to resolve fully.")
@@ -105,10 +167,10 @@ async def resolve(interaction: discord.Interaction, time: str = None):
         await interaction.response.send_message("This command can only be used inside a thread.", ephemeral=True)
         return
 
-    assignee_id = DISCORD_TO_ASSIGNEE.get(interaction.user.id)
+    assignee_id = get_assignee_name(interaction.user.id)
     if not assignee_id:
         await interaction.response.send_message(
-            f"❌ {interaction.user.display_name} isn't mapped to a sheet assignee. Ask an admin to add you.",
+            f"❌ {interaction.user.display_name} isn't registered yet. DM me `/register` to set your name.",
             ephemeral=True,
         )
         return

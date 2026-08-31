@@ -22,8 +22,12 @@ _gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
 _sh = _gc.open_by_key(SHEET_ID)
 worksheet = _sh.worksheet(WORKSHEET_NAME)
 
+def open_worksheet(name):
+    """Opens another tab in the same spreadsheet (e.g. the static schedule tab)."""
+    return _sh.worksheet(name)
+
 # the order the columns are in the sheet, starting from column B (column A is ignored)
-HEADERS = ["RowID", "Day", "Date", "Time", "Location", "Status", "ThreadID"]
+HEADERS = ["AssigneeID", "Day", "Date", "Time", "Location", "Status", "ThreadID"]
 HEADER_ROW = 17
 HEADER_COL = 2  # column B
 DATA_START_ROW = HEADER_ROW + 1
@@ -90,9 +94,10 @@ def find_row_by_threadid(thread_id):
  
 # Writes 
  
-def set_row_status(row_index, status):
+def set_row_status(row_index, status, assignee_id=None):
     worksheet.update_cell(row_index, _col("Status"), status)
-
+    if assignee_id:
+        worksheet.update_cell(row_index, _col("AssigneeID"), assignee_id)
  
 def create_sheet_event(day, date, time, location, status="Needs Coverage", assignee_id="", thread_id=""):
     """
@@ -100,9 +105,9 @@ def create_sheet_event(day, date, time, location, status="Needs Coverage", assig
     (not using append_row, since that defaults to column A). Returns the
     row as a dict.
     """
-    row_id = str(uuid.uuid4())[:8]
-    #name = f"{day} {date} {time} in {location}"
-    row_values = [row_id, day, date, time, location, status, str(thread_id)]
+    assignee_id = assignee_id #or str(uuid.uuid4())  # generate a unique ID if not provided
+    name = f"{day} {date} {time} in {location}"
+    row_values = [assignee_id, day, date, time, location, status, str(thread_id)]
  
     next_row = DATA_START_ROW + len(_get_records())
     rng = f"{_col_letter(HEADER_COL)}{next_row}:{END_COL_LETTER}{next_row}"

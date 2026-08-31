@@ -8,7 +8,7 @@ from notion_client import Client
 import os
 import re
 from zoneinfo import ZoneInfo
-from thread_page_mapping import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
+from name_mappings import get_page_id_for_thread, set_page_id_for_thread, delete_thread_mapping
 
 load_dotenv()
 LOCAL_TZ = ZoneInfo("America/New_York")

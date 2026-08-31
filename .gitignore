@@ -22,6 +22,7 @@ __pycache__/
 # mappings
 discord_to_sheets.py
 thread_to_page.json
+mappings.json
 
 # API Key
 CSL_Discord_Bot.json
