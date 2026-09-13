@@ -4,12 +4,15 @@ from datetime import datetime
 
 import discord
 
-from gsheets_helper import get_calendar_entries, parse_time_range, open_worksheet
+from gsheets_helper import get_calendar_entries, parse_time_range, open_worksheet, write_dynamic_schedule_rows
 
 # .env can override this; defaults to a tab named "Static Schedule" in the
 # same Google Sheet the live coverage data lives in.
 STATIC_SCHEDULE_WORKSHEET_NAME = os.getenv("STATIC_SCHEDULE_WORKSHEET_NAME", "Static Schedule")
-
+DYNAMIC_SCHEDULE_WORKSHEET_NAME = os.getenv(
+    "DYNAMIC_SCHEDULE_WORKSHEET_NAME",
+    "Dynamic Schedule"
+)
 # Cached parse, refreshed on a short TTL rather than on every call — this
 # tab rarely changes, and re-fetching it on every /coverage, /resolve, and
 # /schedule call would burn through Sheets API quota for no reason.
@@ -17,6 +20,14 @@ CACHE_TTL_SECONDS = 300
 _cache = {"time": 0, "schedule": None}
 
 _static_ws = None
+_dynamic_ws = None
+
+
+def _get_dynamic_worksheet():
+    global _dynamic_ws
+    if _dynamic_ws is None:
+        _dynamic_ws = open_worksheet(DYNAMIC_SCHEDULE_WORKSHEET_NAME)
+    return _dynamic_ws
 
 
 def _get_static_worksheet():
@@ -38,7 +49,7 @@ def _cell(values, row, col):
     return v if v != "" else None
 
 
-def _parse_static_schedule():
+def _parse_static_schedule_raw():
     """
     Reads the static schedule tab and returns:
         {
@@ -85,9 +96,8 @@ def _parse_static_schedule():
                 for col, day in day_cols.items():
                     val = _cell(values, r, col)
                     names_by_day.setdefault(day, []).append(val)
-                for day, names in names_by_day.items():
-                    filled = [n for n in names if n and str(n).strip().lower() != "x"]
-                    schedule[location].setdefault(day, []).append((time_label, filled))
+                for day, raw_vals in names_by_day.items():
+                    schedule[location].setdefault(day, []).append((time_label, raw_vals))
                 r += 1
         else:
             r += 1
@@ -95,13 +105,32 @@ def _parse_static_schedule():
     return schedule
 
 
-def get_static_schedule():
-    """Returns the cached parse, re-reading the sheet if the cache has expired."""
+def get_static_schedule_raw():
+    """Returns the cached raw parse (names/'x'/None per column), re-reading the sheet if the cache has expired."""
     now_ts = time_module.time()
     if _cache["schedule"] is None or now_ts - _cache["time"] > CACHE_TTL_SECONDS:
-        _cache["schedule"] = _parse_static_schedule()
+        _cache["schedule"] = _parse_static_schedule_raw()
         _cache["time"] = now_ts
     return _cache["schedule"]
+ 
+ 
+def get_static_schedule():
+    """
+    Filtered view for display: 'x' cells dropped, only real assigned
+    names kept. Derived from the same cached raw read as
+    get_static_schedule_raw(), so this doesn't cost an extra Sheets call.
+    """
+    raw = get_static_schedule_raw()
+    filtered = {}
+    for location, days in raw.items():
+        filtered[location] = {}
+        for day, slots in days.items():
+            filtered[location][day] = [
+                (time_label, [n for n in raw_vals if n and str(n).strip().lower() != "x"])
+                for time_label, raw_vals in slots
+            ]
+    return filtered
+
 
 
 def _time_key(time_str, date_str):
@@ -212,3 +241,79 @@ def build_daily_schedule_embed(target_date=None):
         embed.add_field(name=location, value="\n".join(rows), inline=False)
 
     return embed
+
+
+def build_daily_dynamic_rows(target_date=None):
+    """
+    Builds the flat row list for the dynamic-schedule block (Coverage tab,
+    rows 4-16): one row per assigned person for today's real (non-'x')
+    slots, annotated with any live coverage override. Row keys match
+    gsheets_helper.HEADERS: AssigneeID, Day, Date, Time, Location, Status,
+    ThreadID.
+ 
+    A slot with 2 SCMs produces 2 rows. A slot with no name in a given
+    column but that isn't 'x' is a real, unfilled shift -> one row with
+    AssigneeID blank and Status "Needs Coverage".
+ 
+    NOTE: a coverage override is matched by (location, time, date) only —
+    there's no field recording *which* of a slot's up-to-two static
+    assignees the request was for. If a slot has an override, it's
+    applied to the first row generated for that slot; a second assignee
+    on the same slot still shows as plain "Scheduled".
+    """
+    if target_date is None:
+        target_date = datetime.now()
+ 
+    day_name = target_date.strftime("%A")
+    date_str = target_date.strftime("%m/%d")
+ 
+    raw_static = get_static_schedule_raw()
+    live_by_key, date_str_dash = _live_by_key(target_date)
+ 
+    rows = []
+    for location in ("CSL", "Hackerspace"):
+        slots = raw_static.get(location, {}).get(day_name, [])
+        for time_range, raw_vals in slots:
+            # Real slot = at least one column isn't 'x'. All-'x' means
+            # this isn't a shift that day at all -- skip it entirely.
+            real_vals = [v for v in raw_vals if not (v and str(v).strip().lower() == "x")]
+            if not real_vals:
+                continue
+ 
+            key = (location.lower(), _time_key(time_range, date_str_dash))
+            override = live_by_key.get(key)
+            override_applied = False
+ 
+            for v in real_vals:
+                assignee = v or ""
+                status = "Scheduled" if assignee else "Needs Coverage"
+                thread_id = ""
+ 
+                if override and not override_applied:
+                    if override.get("Status") == "Covered":
+                        assignee = override.get("AssigneeID") or assignee
+                        status = "Covered"
+                    elif override.get("Status") == "Needs Coverage":
+                        status = "Needs Coverage"
+                    thread_id = override.get("ThreadID", "")
+                    override_applied = True
+ 
+                rows.append({
+                    "AssigneeID": assignee,
+                    "Day": day_name,
+                    "Date": date_str,
+                    "Time": time_range,
+                    "Location": location,
+                    "Status": status,
+                    "ThreadID": thread_id,
+                })
+ 
+    return rows
+
+
+def write_daily_dynamic_schedule(target_date=None):
+    """Builds today's dynamic-schedule rows and writes them into the Coverage tab."""
+    rows = build_daily_dynamic_rows(target_date)
+    write_dynamic_schedule_rows(rows)
+    return rows
+    

@@ -16,7 +16,7 @@ LOCAL_TZ = ZoneInfo("America/New_York")
 
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE")
 SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
-WORKSHEET_NAME = os.getenv("GOOGLE_WORKSHEET_NAME", "Shifts")
+WORKSHEET_NAME = os.getenv("GOOGLE_WORKSHEET_NAME", "Coverage")
 
 _gc = gspread.service_account(filename=SERVICE_ACCOUNT_FILE)
 _sh = _gc.open_by_key(SHEET_ID)
@@ -28,7 +28,7 @@ def open_worksheet(name):
 
 # the order the columns are in the sheet, starting from column B (column A is ignored)
 HEADERS = ["AssigneeID", "Day", "Date", "Time", "Location", "Status", "ThreadID"]
-HEADER_ROW = 17
+HEADER_ROW = 19
 HEADER_COL = 2  # column B
 DATA_START_ROW = HEADER_ROW + 1
  
@@ -47,8 +47,34 @@ def _col_letter(col_num):
  
  
 END_COL_LETTER = _col_letter(HEADER_COL + len(HEADERS) - 1)  # last column, e.g. 'J'
+
+
+# --- Dynamic schedule block (top of the Coverage tab, rows 3-16) ---
+# Row 3 holds the header (same HEADERS as the log below); rows 4-16 are the
+# 13 rows available for today's merged static+coverage schedule.
+DYNAMIC_HEADER_ROW = 3
+DYNAMIC_DATA_START_ROW = 4
+DYNAMIC_DATA_END_ROW = 16
+DYNAMIC_MAX_ROWS = DYNAMIC_DATA_END_ROW - DYNAMIC_DATA_START_ROW + 1  # 13
  
  
+def write_dynamic_schedule_rows(rows):
+    """
+    Overwrites the dynamic-schedule block (rows 4-16) with the given list
+    of row-dicts, keyed like HEADERS. Pads with blank rows so leftover
+    rows from a previous day's write get cleared out, and truncates
+    silently if more than DYNAMIC_MAX_ROWS (13) rows are passed in.
+    """
+    rows = rows[:DYNAMIC_MAX_ROWS]
+    values = [[r.get(h, "") for h in HEADERS] for r in rows]
+    while len(values) < DYNAMIC_MAX_ROWS:
+        values.append([""] * len(HEADERS))
+ 
+    rng = f"{_col_letter(HEADER_COL)}{DYNAMIC_DATA_START_ROW}:{END_COL_LETTER}{DYNAMIC_DATA_END_ROW}"
+    worksheet.update(rng, values, value_input_option="USER_ENTERED")
+
+
+
 def _get_records():
     #reads table starting at HEADER_ROW/HEADER_COL and returns a list of dicts keyed by HEADERS, 
     # in sheet order. Reads by position, not by matching header text, 
@@ -67,7 +93,10 @@ def _get_records():
  
 def get_calendar_entries():
     return _get_records()
- 
+
+
+
+
  
 def get_shifts_needing_coverage():
     return [r for r in _get_records() if r.get("Status") == "Needs Coverage"]
@@ -217,6 +246,7 @@ def resolve_partial_shift(thread_id, day, date, full_time, covered_time, locatio
  
     return remainder_times
  
+
  
 # Discord thread creation 
  

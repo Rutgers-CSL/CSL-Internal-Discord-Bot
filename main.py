@@ -16,7 +16,7 @@ from gsheets_helper import (
     find_row_by_threadid,
 )
 from name_mappings  import get_assignee_name, set_assignee_name
-from schedule_helper import build_daily_schedule_embed
+from schedule_helper import build_daily_schedule_embed, write_daily_dynamic_schedule
 import re
 import os
 
@@ -46,8 +46,65 @@ async def on_ready():
         print(f"Synced {len(synced)} slash command(s).")
     except Exception as e:
         print(f"Failed to sync commands: {e}")
+    post_daily_schedule.start()
     # cleanup_threads.start()
 
+
+# Task: posts the daily schedule embed to SCHEDULE_CHANNEL_ID once a day at
+# DAILY_POST_TIME, and remembers the message so refresh_schedule_message()
+# can edit it in place as coverage changes come in throughout the day.
+@tasks.loop(time=DAILY_POST_TIME)
+async def post_daily_schedule():
+    global _schedule_message, _schedule_message_date
+ 
+    if not SCHEDULE_CHANNEL_ID:
+        print("SCHEDULE_CHANNEL_ID not set — skipping daily schedule post.")
+        return
+ 
+    channel = bot.get_channel(int(SCHEDULE_CHANNEL_ID))
+    if channel is None:
+        print(f"Couldn't find channel {SCHEDULE_CHANNEL_ID} for daily schedule post.")
+        return
+ 
+    today = datetime.now(LOCAL_TZ)
+    embed = await asyncio.to_thread(build_daily_schedule_embed, today)
+    _schedule_message = await channel.send(embed=embed)
+    _schedule_message_date = today.date()
+    await asyncio.to_thread(write_daily_dynamic_schedule, today)
+ 
+@post_daily_schedule.before_loop
+async def before_post_daily_schedule():
+    await bot.wait_until_ready()
+ 
+ 
+async def refresh_schedule_message():
+    """
+    If today's auto-posted schedule message is still live, edit it with a
+    freshly built embed so coverage changes show up right away instead of
+    waiting for tomorrow's post. No-ops if nothing's been posted yet today.
+    """
+    global _schedule_message, _schedule_message_date
+ 
+    if _schedule_message is None or _schedule_message_date != datetime.now(LOCAL_TZ).date():
+        return
+ 
+    embed = await asyncio.to_thread(build_daily_schedule_embed, datetime.now(LOCAL_TZ))
+    try:
+        await _schedule_message.edit(embed=embed)
+    except discord.NotFound:
+        _schedule_message = None
+        _schedule_message_date = None
+
+
+async def sync_daily_schedule():
+    """
+    Single entry point for both dynamic-schedule outputs: rewrites the
+    Coverage tab's row block (always), and refreshes the posted embed if
+    today's is still up (via refresh_schedule_message's own check).
+    Called after /coverage, /resolve, and as part of the daily post.
+    """
+    await asyncio.to_thread(write_daily_dynamic_schedule, datetime.now(LOCAL_TZ))
+    await refresh_schedule_message()
 
 # # Task to clean up old threads every 2 hours
 # @tasks.loop(hours=2)
@@ -103,7 +160,7 @@ async def coverage(interaction: discord.Interaction, day: str, date: str, time: 
 
     await interaction.response.send_message("Creating coverage thread...", ephemeral=True)
     await create_shift_thread(interaction.channel, day, date, time, location)
-
+    await sync_daily_schedule()
 # Slash command to register your Discord account -> preferred name mapping.
 # DM-only: this is a personal setting, not something that belongs in a
 # server channel.
@@ -151,7 +208,11 @@ async def schedule(interaction: discord.Interaction, date: str = None):
     # Defer: building this reads two Sheets tabs, which can exceed
     # Discord's 3-second response window.
     await interaction.response.defer()
-    embed = await asyncio.to_thread(build_daily_schedule_embed, target_date)
+    await asyncio.to_thread(write_dynamic_schedule, target_date)
+    embed = await asyncio.to_thread(
+        build_daily_schedule_embed,
+        target_date
+    )
     await interaction.followup.send(embed=embed)
  
 
@@ -197,6 +258,7 @@ async def resolve(interaction: discord.Interaction, time: str = None):
                 await create_shift_thread(parent_channel, day, date, remainder_time, location)
             await interaction.response.send_message(f"✅ {time} covered, remaining time still needs coverage. Closing thread...")
 
+        await sync_daily_schedule()
         await interaction.channel.delete()
 
     except ValueError as e:
@@ -217,6 +279,27 @@ async def resolve(interaction: discord.Interaction, time: str = None):
 #     await interaction.response.defer(ephemeral=True)
 #     await cleanup_threads()
 #     await interaction.followup.send("Cleanup ran!", ephemeral=True)
+
+@bot.tree.command(name="refresh_schedule", description="Manually rewrite today's dynamic schedule (Coverage tab rows 4-16)")
+@app_commands.describe(date="Optional: MM/DD date to write (defaults to today)")
+async def refresh_schedule(interaction: discord.Interaction, date: str = None):
+    target_date = datetime.now(LOCAL_TZ)
+    if date is not None:
+        parsed = parse_shift_date(date)
+        if parsed is None:
+            await interaction.response.send_message(
+                "❌ Invalid date format. Please use MM/DD (e.g., 09/15).", ephemeral=True
+            )
+            return
+        target_date = target_date.replace(month=parsed.month, day=parsed.day)
+ 
+    await interaction.response.defer(ephemeral=True)
+    rows = await asyncio.to_thread(write_daily_dynamic_schedule, target_date)
+    await interaction.followup.send(
+        f"✅ Rewrote the dynamic schedule for {target_date.strftime('%m/%d')} — {len(rows)} row(s).",
+        ephemeral=True,
+    )
+
 
 
 bot.run(token, log_handler=handler, log_level=logging.DEBUG)
