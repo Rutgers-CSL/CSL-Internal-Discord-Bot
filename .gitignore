@@ -26,3 +26,5 @@ mappings.json
 
 # API Key
 CSL_Discord_Bot.json
+# Google service account credentials
+csl-bot-test-050b55de7696.json
