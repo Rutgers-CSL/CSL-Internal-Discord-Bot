@@ -22,3 +22,5 @@ __pycache__/
 # notion id to discord id mappings
 discord_to_notion.py
 
+# Google service account credentials
+csl-bot-test-050b55de7696.json
