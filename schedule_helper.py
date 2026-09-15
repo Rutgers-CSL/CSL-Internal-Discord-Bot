@@ -266,9 +266,10 @@ def build_daily_dynamic_rows(target_date=None):
  
     day_name = target_date.strftime("%A")
     date_str = target_date.strftime("%m/%d")
+    date_str_dash = f"{target_date.year}-{target_date.month:02d}-{target_date.day:02d}"
  
     raw_static = get_static_schedule_raw()
-    live_by_key, date_str_dash = _live_by_key(target_date)
+    live_today = [r for r in get_calendar_entries() if r.get("Date") == date_str]
  
     rows = []
     for location in ("CSL", "Hackerspace"):
@@ -280,33 +281,50 @@ def build_daily_dynamic_rows(target_date=None):
             if not real_vals:
                 continue
  
-            key = (location.lower(), _time_key(time_range, date_str_dash))
-            override = live_by_key.get(key)
-            override_applied = False
+            try:
+                slot_start, slot_end = parse_time_range(time_range, date_str_dash)
+            except Exception:
+                slot_start = slot_end = None
+
+            overlapping = []
+
+            if slot_start is not None:
+                for entry in live_today:
+                    if str(entry.get("Location", "")).strip().lower() != location.lower():
+                        continue
+                    try:
+                        entry_start, entry_end = parse_time_range(entry.get("Time", ""), date_str_dash)
+                    except Exception:
+                        continue
+                    if slot_start < entry_end and entry_start < slot_end:
+                        overlapping.append(entry)
  
-            for v in real_vals:
-                assignee = v or ""
-                status = "Scheduled" if assignee else "Needs Coverage"
-                thread_id = ""
- 
-                if override and not override_applied:
-                    if override.get("Status") == "Covered":
-                        assignee = override.get("AssigneeID") or assignee
-                        status = "Covered"
-                    elif override.get("Status") == "Needs Coverage":
-                        status = "Needs Coverage"
-                    thread_id = override.get("ThreadID", "")
-                    override_applied = True
- 
-                rows.append({
-                    "AssigneeID": assignee,
-                    "Day": day_name,
-                    "Date": date_str,
-                    "Time": time_range,
-                    "Location": location,
-                    "Status": status,
-                    "ThreadID": thread_id,
-                })
+            if overlapping:
+                for entry in overlapping:
+                    status = entry.get("Status") or "Needs Coverage"
+                    assignee = entry.get("AssigneeID", "") if status == "Covered" else ""
+                    rows.append({
+                        "AssigneeID": assignee,
+                        "Day": day_name,
+                        "Date": date_str,
+                        "Time": entry.get("Time", time_range),
+                        "Location": location,
+                        "Status": status,
+                        "ThreadID": entry.get("ThreadID", ""),
+                    })
+            else:
+                for v in real_vals:
+                    assignee = v or ""
+                    rows.append({
+                        "AssigneeID": assignee,
+                        "Day": day_name,
+                        "Date": date_str,
+                        "Time": time_range,
+                        "Location": location,
+                        "Status": "Scheduled" if assignee else "Open",
+                        "ThreadID": "",
+                    })
+            
  
     return rows
 

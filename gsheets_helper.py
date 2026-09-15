@@ -237,6 +237,7 @@ def resolve_partial_shift(thread_id, day, date, full_time, covered_time, locatio
         raise ValueError("Couldn't find this shift in the sheet.")
  
     set_row_status(row_index, "Covered", assignee_id)
+    worksheet.update_cell(row_index, _col("Time"), covered_time)
  
     remainder_times = []
     if covered_start > full_start:
