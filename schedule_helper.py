@@ -300,7 +300,44 @@ def build_daily_dynamic_rows(target_date=None):
                         overlapping.append(entry)
  
             if overlapping:
-                for entry in overlapping:
+                matched_entries = set()
+                for v in real_vals:
+                    asignee = v or ""
+                    status = "Scheduled" if asignee else "Open"
+                    thread_id = ""
+
+                    for i, entry in enumerate(overlapping):
+                        if i in matched_entries:
+                            continue
+                        requester = str(entry.get("AssigneeID", "")).strip()
+                        if not requester or requester.lower() == asignee.strip().lower():
+                            continue
+
+                        if entry.get("Status") == "Covered":
+                            asignee = entry.get("AssigneeID", "")
+                            status = "Covered"
+                        else:
+                            asignee = ""
+                            status = "Needs Coverage"
+                        thread_id = entry.get("ThreadID", "")
+                        matched_entries.add(i)
+                        break
+
+                    rows.append({
+                        "AssigneeID": asignee,
+                        "Day": day_name,
+                        "Date": date_str,
+                        "Time": time_range,
+                        "Location": location,
+                        "Status": status,
+                        "ThreadID": thread_id,
+                    })
+
+
+
+                for i, entry in enumerate(overlapping):
+                    if i in matched_entries:
+                        continue
                     status = entry.get("Status") or "Needs Coverage"
                     assignee = entry.get("AssigneeID", "") if status == "Covered" else ""
                     rows.append({

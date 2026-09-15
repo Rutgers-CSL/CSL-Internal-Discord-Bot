@@ -27,7 +27,7 @@ def open_worksheet(name):
     return _sh.worksheet(name)
 
 # the order the columns are in the sheet, starting from column B (column A is ignored)
-HEADERS = ["AssigneeID", "Day", "Date", "Time", "Location", "Status", "ThreadID"]
+HEADERS = ["AssigneeID", "Day", "Date", "Time", "Location", "Status", "ThreadID", "OriginalAssignee"]
 HEADER_ROW = 19
 HEADER_COL = 2  # column B
 DATA_START_ROW = HEADER_ROW + 1
@@ -128,7 +128,7 @@ def set_row_status(row_index, status, assignee_id=None):
     if assignee_id:
         worksheet.update_cell(row_index, _col("AssigneeID"), assignee_id)
  
-def create_sheet_event(day, date, time, location, status="Needs Coverage", assignee_id="", thread_id=""):
+def create_sheet_event(day, date, time, location, status="Needs Coverage", assignee_id="", thread_id="", original_assignee=""):
     """
     Appends a new row for a shift, directly below the last row of the table
     (not using append_row, since that defaults to column A). Returns the
@@ -136,7 +136,7 @@ def create_sheet_event(day, date, time, location, status="Needs Coverage", assig
     """
     assignee_id = assignee_id #or str(uuid.uuid4())  # generate a unique ID if not provided
     name = f"{day} {date} {time} in {location}"
-    row_values = [assignee_id, day, date, time, location, status, str(thread_id)]
+    row_values = [assignee_id, day, date, time, location, status, str(thread_id), original_assignee]
  
     next_row = DATA_START_ROW + len(_get_records())
     rng = f"{_col_letter(HEADER_COL)}{next_row}:{END_COL_LETTER}{next_row}"
@@ -251,7 +251,7 @@ def resolve_partial_shift(thread_id, day, date, full_time, covered_time, locatio
  
 # Discord thread creation 
  
-async def create_shift_thread(channel, day, date, time, location):
+async def create_shift_thread(channel, day, date, time, location, assignee_id=""):
     """
     Creates a coverage thread in the given channel + a matching sheet row
     (with the thread's ID stored directly in the ThreadID column).
@@ -263,7 +263,7 @@ async def create_shift_thread(channel, day, date, time, location):
         type=discord.ChannelType.public_thread
     )
     row = await asyncio.to_thread(
-        create_sheet_event, day, date, time, location, "Needs Coverage", "", thread.id
+        create_sheet_event, day, date, time, location, "Needs Coverage", assignee_id, thread.id, assignee_id
     )
     return thread, row
  
